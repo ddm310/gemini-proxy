@@ -15,7 +15,7 @@ app.post('/generate-image', async (req, res) => {
     const { prompt, imageData } = req.body;
     
     console.log('📨 Получен запрос:', { 
-      prompt: prompt?.substring(0, 100),
+      hasPrompt: !!prompt,
       hasImage: !!imageData 
     });
 
@@ -23,40 +23,17 @@ app.post('/generate-image', async (req, res) => {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    // Если есть изображение - используем Gemini для анализа + Pollinations
+    // Если есть изображение - ПРОСТО отправляем в Pollinations с улучшенным промптом
     if (imageData) {
-      console.log('🎨 Режим img2img через Gemini + Pollinations');
+      console.log('🎨 Режим редактирования изображения');
       
-      // 1. Gemini анализирует изображение и создаёт детальный промпт
-      const GEMINI_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+      // Создаем улучшенный промпт для редактирования
+      const enhancedPrompt = `edit the image: ${prompt}. Maintain original composition and style but apply the requested changes`;
       
-      const geminiRequest = {
-        contents: [{
-          parts: [
-            {
-              inline_data: {
-                mime_type: "image/jpeg", 
-                data: imageData
-              }
-            },
-            {
-              text: `Analyze this image and create a detailed prompt for image generation that combines: "${prompt}" with the visual elements from the image. Return ONLY the prompt, no additional text.`
-            }
-          ]
-        }]
-      };
-
-      const geminiResponse = await axios.post(GEMINI_URL, geminiRequest, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30000
-      });
-
-      const enhancedPrompt = geminiResponse.data.candidates[0].content.parts[0].text;
-      console.log('💡 Улучшенный промпт от Gemini:', enhancedPrompt);
-
-      // 2. Pollinations генерирует изображение по улучшенному промпту
       const encodedPrompt = encodeURIComponent(enhancedPrompt);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?model=nanobanano`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}`;
+      
+      console.log('🔗 Pollinations URL:', pollinationsUrl);
       
       const imageResponse = await axios.get(pollinationsUrl, {
         responseType: 'arraybuffer',
@@ -71,9 +48,9 @@ app.post('/generate-image', async (req, res) => {
 
     } else {
       // Обычная генерация через Pollinations
-      console.log('🆕 Обычная генерация через Pollinations');
+      console.log('🆕 Обычная генерация');
       const encodedPrompt = encodeURIComponent(prompt);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?model=nanobanano`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}`;
       
       const imageResponse = await axios.get(pollinationsUrl, {
         responseType: 'arraybuffer', 
@@ -88,7 +65,7 @@ app.post('/generate-image', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('💥 Ошибка:', error.response?.data || error.message);
+    console.error('💥 Ошибка:', error.message);
     res.status(500).json({ 
       error: 'Ошибка генерации',
       details: error.message
@@ -97,7 +74,7 @@ app.post('/generate-image', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', service: 'Gemini + Pollinations Proxy' });
+  res.json({ status: 'OK', service: 'Image Generator Proxy' });
 });
 
 app.listen(PORT, () => {

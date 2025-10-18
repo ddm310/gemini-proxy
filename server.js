@@ -14,88 +14,80 @@ app.post('/generate-image', async (req, res) => {
   try {
     const { prompt, imageData } = req.body;
     
-    console.log('📨 Получен запрос:', { 
-      prompt: prompt?.substring(0, 100),
-      hasImage: !!imageData 
-    });
+    console.log('📨 Получен запрос на редактирование изображения');
+    console.log('📝 Промпт:', prompt);
+    console.log('🖼️ Изображение:', imageData ? 'Есть' : 'Нет');
 
     if (!prompt) {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    // Пробуем разные модели Gemini
-    const models = [
-      'gemini-1.5-flash',
-      'gemini-1.5-pro', 
-      'gemini-1.0-pro'
-    ];
-
-    for (const model of models) {
-      try {
-        console.log(`🔧 Пробуем модель: ${model}`);
-        
-        const GEMINI_URL = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-        
-        const requestBody = {
-          contents: [{
-            parts: [{
-              text: `Create an image of: ${prompt}. Return only the image, no text.`
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7
-          }
-        };
-
-        // Если есть изображение - добавляем его
-        if (imageData) {
-          requestBody.contents[0].parts.unshift({
-            inline_data: {
-              mime_type: "image/jpeg",
-              data: imageData
-            }
-          });
-        }
-
-        const response = await axios.post(GEMINI_URL, requestBody, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 60000
-        });
-
-        console.log(`✅ Модель ${model} ответила`);
-
-        // Обрабатываем успешный ответ
-        if (response.data.candidates?.[0]?.content?.parts?.[0]?.inline_data) {
-          const imageData = response.data.candidates[0].content.parts[0].inline_data.data;
-          const imageBuffer = Buffer.from(imageData, 'base64');
-          
-          res.set({
-            'Content-Type': 'image/png',
-            'Content-Length': imageBuffer.length
-          });
-          return res.send(imageBuffer);
-        } else {
-          console.log('❌ Нет данных изображения в ответе:', response.data);
-          continue; // Пробуем следующую модель
-        }
-
-      } catch (modelError) {
-        console.log(`❌ Модель ${model} не сработала:`, modelError.response?.data || modelError.message);
-        continue; // Пробуем следующую модель
-      }
+    if (!imageData) {
+      return res.status(400).json({ error: 'Image is required for editing' });
     }
 
-    // Если все модели не сработали
-    res.status(500).json({ 
-      error: 'Все модели Gemini недоступны',
-      details: 'Попробуйте другой промпт' 
+    const GEMINI_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    const requestBody = {
+      contents: [{
+        parts: [
+          {
+            inline_data: {
+              mime_type: "image/jpeg", 
+              data: imageData
+            }
+          },
+          {
+            text: `Based on this image, create a new image that: ${prompt}. Return only the new generated image, no text description.`
+          }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.7
+      }
+    };
+
+    console.log('🚀 Отправляем запрос к Gemini...');
+    
+    const response = await axios.post(GEMINI_URL, requestBody, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 120000
     });
 
+    console.log('✅ Gemini ответил');
+
+    // Обрабатываем ответ
+    if (response.data.candidates && 
+        response.data.candidates[0] && 
+        response.data.candidates[0].content && 
+        response.data.candidates[0].content.parts && 
+        response.data.candidates[0].content.parts[0] && 
+        response.data.candidates[0].content.parts[0].inline_data) {
+      
+      const newImageData = response.data.candidates[0].content.parts[0].inline_data.data;
+      const imageBuffer = Buffer.from(newImageData, 'base64');
+      
+      res.set({
+        'Content-Type': 'image/png',
+        'Content-Length': imageBuffer.length
+      });
+      
+      console.log('🎉 Успешно сгенерировано новое изображение');
+      return res.send(imageBuffer);
+      
+    } else {
+      console.log('❌ Неверный формат ответа от Gemini:', JSON.stringify(response.data, null, 2));
+      return res.status(500).json({ 
+        error: 'Gemini не вернул изображение',
+        details: response.data 
+      });
+    }
+
   } catch (error) {
-    console.error('💥 Критическая ошибка прокси:', error);
+    console.error('💥 Ошибка:', error.response?.data || error.message);
     res.status(500).json({ 
       error: 'Ошибка генерации',
-      details: error.message 
+      details: error.response?.data || error.message 
     });
   }
 });
@@ -103,12 +95,11 @@ app.post('/generate-image', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    service: 'Gemini Proxy',
+    service: 'Gemini Image Editor',
     timestamp: new Date().toISOString()
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Proxy server running on port ${PORT}`);
-  console.log(`🔑 API Key: ${GEMINI_API_KEY ? '✅ Установлен' : '❌ Отсутствует'}`);
+  console.log(`🚀 Image Editor Proxy running on port ${PORT}`);
 });

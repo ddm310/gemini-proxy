@@ -23,69 +23,83 @@ app.post('/generate-image', async (req, res) => {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    // Используем Imagen модели для генерации изображений
-    const IMAGEN_URL = `https://us-central1-aiplatform.googleapis.com/v1/projects/gen-lang-client-0336203728/locations/us-central1/publishers/google/models/imagen-4.0-fast-generate-001:predict`;
-
-    const requestBody = {
-      instances: [
-        {
-          prompt: prompt
-        }
-      ],
-      parameters: {
-        sampleCount: 1
-      }
-    };
-
-    // Если есть изображение для img2img
+    // Если есть изображение - используем Gemini для анализа + Pollinations
     if (imageData) {
-      requestBody.instances[0].image = {
-        bytesBase64Encoded: imageData
-      };
-    }
-
-    const response = await axios.post(IMAGEN_URL, requestBody, {
-      headers: { 
-        'Authorization': `Bearer ${GEMINI_API_KEY}`,
-        'Content-Type': 'application/json' 
-      },
-      timeout: 60000
-    });
-
-    console.log('✅ Imagen ответила');
-
-    // Обрабатываем ответ Imagen
-    if (response.data.predictions && response.data.predictions[0]) {
-      const imageBase64 = response.data.predictions[0].bytesBase64Encoded;
-      const imageBuffer = Buffer.from(imageBase64, 'base64');
+      console.log('🎨 Режим img2img через Gemini + Pollinations');
       
+      // 1. Gemini анализирует изображение и создаёт детальный промпт
+      const GEMINI_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+      
+      const geminiRequest = {
+        contents: [{
+          parts: [
+            {
+              inline_data: {
+                mime_type: "image/jpeg", 
+                data: imageData
+              }
+            },
+            {
+              text: `Analyze this image and create a detailed prompt for image generation that combines: "${prompt}" with the visual elements from the image. Return ONLY the prompt, no additional text.`
+            }
+          ]
+        }]
+      };
+
+      const geminiResponse = await axios.post(GEMINI_URL, geminiRequest, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+      });
+
+      const enhancedPrompt = geminiResponse.data.candidates[0].content.parts[0].text;
+      console.log('💡 Улучшенный промпт от Gemini:', enhancedPrompt);
+
+      // 2. Pollinations генерирует изображение по улучшенному промпту
+      const encodedPrompt = encodeURIComponent(enhancedPrompt);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?model=nanobanano`;
+      
+      const imageResponse = await axios.get(pollinationsUrl, {
+        responseType: 'arraybuffer',
+        timeout: 60000
+      });
+
       res.set({
         'Content-Type': 'image/png',
-        'Content-Length': imageBuffer.length
+        'Content-Length': imageResponse.data.length
       });
-      return res.send(imageBuffer);
+      return res.send(imageResponse.data);
+
     } else {
-      console.log('❌ Нет данных изображения в ответе:', response.data);
-      return res.status(500).json({ error: 'No image generated' });
+      // Обычная генерация через Pollinations
+      console.log('🆕 Обычная генерация через Pollinations');
+      const encodedPrompt = encodeURIComponent(prompt);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?model=nanobanano`;
+      
+      const imageResponse = await axios.get(pollinationsUrl, {
+        responseType: 'arraybuffer', 
+        timeout: 60000
+      });
+
+      res.set({
+        'Content-Type': 'image/png',
+        'Content-Length': imageResponse.data.length
+      });
+      return res.send(imageResponse.data);
     }
 
   } catch (error) {
-    console.error('💥 Ошибка Imagen:', error.response?.data || error.message);
+    console.error('💥 Ошибка:', error.response?.data || error.message);
     res.status(500).json({ 
       error: 'Ошибка генерации',
-      details: error.response?.data || error.message
+      details: error.message
     });
   }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    service: 'Imagen Proxy',
-    timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'OK', service: 'Gemini + Pollinations Proxy' });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Imagen proxy server running on port ${PORT}`);
+  console.log(`🚀 Proxy server running on port ${PORT}`);
 });

@@ -14,26 +14,54 @@ app.post('/generate-image', async (req, res) => {
   try {
     const { prompt, imageData } = req.body;
     
-    console.log('📨 Получен запрос:', { 
-      hasPrompt: !!prompt,
-      hasImage: !!imageData 
-    });
+    console.log('📨 Получен запрос:');
+    console.log('🔤 Оригинальный промпт:', prompt);
+    console.log('🖼️ Есть изображение:', !!imageData);
 
     if (!prompt) {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    // Если есть изображение - ПРОСТО отправляем в Pollinations с улучшенным промптом
+    // Если есть изображение - используем Gemini для анализа + Pollinations
     if (imageData) {
-      console.log('🎨 Режим редактирования изображения');
+      console.log('🎨 Режим img2img через Gemini + Pollinations');
       
-      // Создаем улучшенный промпт для редактирования
-      const enhancedPrompt = `edit the image: ${prompt}. Maintain original composition and style but apply the requested changes`;
+      // 1. Gemini анализирует изображение и создаёт детальный промпт
+      const GEMINI_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       
+      const geminiRequest = {
+        contents: [{
+          parts: [
+            {
+              inline_data: {
+                mime_type: "image/jpeg", 
+                data: imageData
+              }
+            },
+            {
+              text: `Analyze this image and create a detailed prompt for image generation that combines: "${prompt}" with the visual elements from the image. Return ONLY the prompt, no additional text.`
+            }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.9  // Добавляем случайность
+        }
+      };
+
+      const geminiResponse = await axios.post(GEMINI_URL, geminiRequest, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+      });
+
+      const enhancedPrompt = geminiResponse.data.candidates[0].content.parts[0].text;
+      console.log('💡 Улучшенный промпт от Gemini:', enhancedPrompt);
+
+      // 2. Pollinations генерирует изображение по улучшенному промпту
+      const randomSeed = Math.floor(Math.random() * 1000000); // Случайный seed
       const encodedPrompt = encodeURIComponent(enhancedPrompt);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?model=nanobanano&seed=${randomSeed}`;
       
-      console.log('🔗 Pollinations URL:', pollinationsUrl);
+      console.log('🌐 Pollinations URL:', pollinationsUrl);
       
       const imageResponse = await axios.get(pollinationsUrl, {
         responseType: 'arraybuffer',
@@ -48,9 +76,12 @@ app.post('/generate-image', async (req, res) => {
 
     } else {
       // Обычная генерация через Pollinations
-      console.log('🆕 Обычная генерация');
+      console.log('🆕 Обычная генерация через Pollinations');
+      const randomSeed = Math.floor(Math.random() * 1000000); // Случайный seed
       const encodedPrompt = encodeURIComponent(prompt);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?model=nanobanano&seed=${randomSeed}`;
+      
+      console.log('🌐 Pollinations URL:', pollinationsUrl);
       
       const imageResponse = await axios.get(pollinationsUrl, {
         responseType: 'arraybuffer', 
@@ -65,7 +96,7 @@ app.post('/generate-image', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('💥 Ошибка:', error.message);
+    console.error('💥 Ошибка:', error.response?.data || error.message);
     res.status(500).json({ 
       error: 'Ошибка генерации',
       details: error.message
@@ -74,7 +105,7 @@ app.post('/generate-image', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', service: 'Image Generator Proxy' });
+  res.json({ status: 'OK', service: 'Gemini + Pollinations Proxy' });
 });
 
 app.listen(PORT, () => {
